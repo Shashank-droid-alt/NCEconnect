@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "users": {
+      "title": "Users",
+      "description": "Registered campus users (students, alumni, admins)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "department": { "type": "string" },
+        "gradYear": { "type": "string" },
+        "bio": { "type": "string" },
+        "avatar": { "type": "string" },
+        "isApproved": { "type": "boolean" },
+        "isBlacklisted": { "type": "boolean" },
+        "isAdmin": { "type": "boolean" },
+        "rollNumber": { "type": "string" },
+        "registrationNumber": { "type": "string" },
+        "dob": { "type": "string" },
+        "password": { "type": "string" }
+      },
+      "required": ["id", "name", "username", "role", "isApproved"]
+    },
+    "posts": {
+      "title": "Posts",
+      "description": "Feed posts, announcements, and discussions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "content": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "likes": { "type": "array", "items": { "type": "string" } },
+        "department": { "type": "string" },
+        "category": { "type": "string" },
+        "isPinned": { "type": "boolean" }
+      },
+      "required": ["id", "authorId", "content", "timestamp"]
+    },
+    "reports": {
+      "title": "Reports",
+      "description": "User and post moderation reports",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "reporterId": { "type": "string" },
+        "targetUserId": { "type": "string" },
+        "postId": { "type": "string" },
+        "reason": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "reporterId", "reason", "timestamp"]
+    },
+    "adminLogs": {
+      "title": "Admin Logs",
+      "description": "Audit logs for administrative actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actorUsername": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "action", "details"]
+    }
+  }
+}

@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  html, body {
+    background-color: #0F1113;
+    color: #E2E8F0;
+    min-height: 100vh;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  /* Custom scrollbar for dark surfaces */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0F1113;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2A2E35;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3F444E;
+  }
+}
+
+/* Hide scrollbar for clean horizontal chip scrolling without extra visible scrollbar track */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Elegant Dark design system utility shortcuts */
+.bg-dark-canvas {
+  background-color: #0F1113;
+}
+
+.bg-dark-surface {
+  background-color: #1C1F23;
+}
+
+.bg-dark-input {
+  background-color: #2A2E35;
+}
+
+.border-dark-subtle {
+  border-color: rgba(255, 255, 255, 0.08);
+}

@@ -1,0 +1,6 @@
+{
+  "name": "NCEconnect",
+  "description": "Networking platform for university students and alumni featuring connection requests, multi-photo feed with image cropping, direct messaging, user tagging, admin controls, and real-time activity notifications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

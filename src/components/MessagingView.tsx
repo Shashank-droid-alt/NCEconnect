@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Send, Image as ImageIcon, Search, MessageSquare, CheckCheck, ArrowLeft } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { FormattedText } from '../utils/textFormatter';
@@ -12,6 +12,12 @@ export const MessagingView: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [photoAttachment, setPhotoAttachment] = useState<string | null>(null);
   const [showMobileChat, setShowMobileChat] = useState<boolean>(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll messages to bottom when chatMessages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [activeContactId, messages.length]);
 
   if (!currentUser) return null;
 
@@ -169,6 +175,8 @@ export const MessagingView: React.FC = () => {
                   );
                 })
               )}
+              {/* Scroll anchor — auto-scroll targets this */}
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Message Input Box */}

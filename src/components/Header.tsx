@@ -10,8 +10,6 @@ import {
   ChevronDown,
   LogOut,
   UserPlus,
-  ShieldAlert,
-  Sparkles,
   MoreVertical,
   X,
 } from 'lucide-react';

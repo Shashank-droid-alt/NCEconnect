@@ -9,14 +9,10 @@ import {
   AdminActivityLog,
   UserReport,
 } from '../types';
-import {
-  INITIAL_USERS,
-  INITIAL_POSTS,
-  INITIAL_MESSAGES,
-  INITIAL_NOTIFICATIONS,
-  INITIAL_ADMIN_LOGS,
-} from '../data/seedData';
+
 import { extractTaggedUsernames } from '../utils/textFormatter';
+import { hashPassword } from '../utils/crypto';
+import { supabase } from '../lib/supabase';
 
 interface AppContextType {
   currentUser: User | null;
@@ -37,11 +33,11 @@ interface AppContextType {
   setSelectedUserIdForView: (id: string | null) => void;
   setLightboxImage: (data: { src: string; title?: string } | null) => void;
   switchUser: (userId: string) => void;
-  loginUser: (identifier: string, pass: string) => { success: boolean; message: string };
+  loginUser: (identifier: string, pass: string) => Promise<{ success: boolean; message: string }>;
   logoutUser: () => void;
   loginAsDemoUser: (userId: string) => void;
   toggleTheme: () => void;
-  registerUser: (newUser: Omit<User, 'id' | 'isApproved' | 'reportCount' | 'connections' | 'pendingRequestsReceived' | 'pendingRequestsSent' | 'createdAt'>) => { success: boolean; message: string };
+  registerUser: (newUser: Omit<User, 'id' | 'isApproved' | 'reportCount' | 'connections' | 'pendingRequestsReceived' | 'pendingRequestsSent' | 'createdAt'>) => Promise<{ success: boolean; message: string }>;
   approveUser: (userId: string) => void;
   rejectUser: (userId: string) => void;
   createPost: (content: string, photos: string[], videoUrl?: string) => void;
@@ -71,50 +67,67 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const LOCAL_STORAGE_KEY = 'nceconnect_app_data_v1';
+const LOCAL_STORAGE_KEY = 'nceconnect_app_data_v2';
+
+// Module-level constant - not recreated on every render
+const SEED_ADMIN: User = {
+  id: 'u-admin-nce-001',
+  name: 'NCE Admin',
+  username: 'admin_nce',
+  email: 'admin@nce.edu',
+  role: 'alumni',
+  department: 'Computer Science & Engineering | UG',
+  gradYear: '2024',
+  bio: 'Official NCEconnect Administrator. Managing campus digital community.',
+  avatar: 'https://api.dicebear.com/7.x/initials/svg?seed=NCE+Admin&backgroundColor=4f46e5&textColor=ffffff',
+  coverImage: undefined,
+  isAdmin: true,
+  isApproved: true,
+  isBlacklisted: false,
+  reportCount: 0,
+  rollNumber: '21001103001',
+  registrationNumber: 'REG-ADMIN-001',
+  dob: '2000-01-01',
+  password: 'a36aef5a11c4073fbe60314fc9df530a9d5f986533594d1f5190742ff9e0e408',
+  connections: [],
+  pendingRequestsReceived: [],
+  pendingRequestsSent: [],
+  createdAt: '2024-01-01T00:00:00.000Z',
+};
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Load from local storage or fallback to seed data
+  // Load from local storage (if any) or fallback to seed admin user
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY}_users`);
-    let list: User[] = saved ? JSON.parse(saved) : INITIAL_USERS;
-    const hasAdmin = list.find((u) => u.username?.toLowerCase() === 'admin_nce' || u.id === 'u-admin');
-    if (!hasAdmin) {
-      list = [INITIAL_USERS[0], ...list];
-    } else {
-      list = list.map((u) => {
-        if (u.username?.toLowerCase() === 'admin_nce' || u.id === 'u-admin') {
-          return {
-            ...u,
-            isAdmin: true,
-            isApproved: true,
-            password: u.password || 'Admin@2026',
-          };
-        }
-        return u;
-      });
+    if (saved) {
+      const parsed: User[] = JSON.parse(saved);
+      // Ensure the seed admin always exists (re-inject if missing)
+      if (!parsed.find((u) => u.id === SEED_ADMIN.id)) {
+        return [SEED_ADMIN, ...parsed];
+      }
+      return parsed;
     }
-    return list;
+    return [SEED_ADMIN];
   });
 
   const [posts, setPosts] = useState<Post[]>(() => {
     const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY}_posts`);
-    return saved ? JSON.parse(saved) : INITIAL_POSTS;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [messages, setMessages] = useState<DirectMessage[]>(() => {
     const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY}_messages`);
-    return saved ? JSON.parse(saved) : INITIAL_MESSAGES;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
     const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY}_notifications`);
-    return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [adminLogs, setAdminLogs] = useState<AdminActivityLog[]>(() => {
     const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY}_adminLogs`);
-    return saved ? JSON.parse(saved) : INITIAL_ADMIN_LOGS;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [reports, setReports] = useState<UserReport[]>(() => {
@@ -141,6 +154,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTab, setActiveTab] = useState<'feed' | 'network' | 'messaging' | 'me' | 'admin'>('feed');
   const [selectedUserIdForView, setSelectedUserIdForView] = useState<string | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; title?: string } | null>(null);
+
+  // Guard: prevents false session reset before Supabase data has loaded
+  const [isSupabaseLoaded, setIsSupabaseLoaded] = useState(false);
 
   // Sync state to local storage
   useEffect(() => {
@@ -184,17 +200,265 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [theme]);
 
+  // Migration: hash any plain text passwords stored in local storage users array
+  // Runs once on mount only to avoid infinite re-render (setUsers would re-trigger if users were in deps)
+  useEffect(() => {
+    const migratePasswords = async () => {
+      const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY}_users`);
+      const storedUsers: any[] = saved ? JSON.parse(saved) : [];
+      let needsUpdate = false;
+      const updatedUsers = await Promise.all(
+        storedUsers.map(async (u: any) => {
+          if (u.password && !/^[a-f0-9]{64}$/i.test(u.password)) {
+            needsUpdate = true;
+            const hashed = await hashPassword(u.password);
+            return { ...u, password: hashed };
+          }
+          return u;
+        })
+      );
+      if (needsUpdate) {
+        setUsers(updatedUsers);
+      }
+    };
+    migratePasswords();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty: one-time password migration on mount
+
+  // Supabase Integration: Fetch Initial Data & Setup Realtime
+  useEffect(() => {
+    const initSupabaseData = async () => {
+      try {
+        // 1. Fetch Users
+        const { data: dbUsers } = await supabase.from('users').select('*');
+        if (dbUsers && dbUsers.length > 0) {
+          const mappedUsers = dbUsers.map((u: any) => ({
+            id: u.id,
+            name: u.name,
+            username: u.username,
+            email: u.email,
+            role: u.role,
+            department: u.department,
+            gradYear: u.grad_year,
+            avatar: u.avatar,
+            coverImage: u.cover_image,
+            bio: u.bio,
+            isAdmin: u.is_admin,
+            isApproved: u.is_approved,
+            isBlacklisted: u.is_blacklisted,
+            reportCount: u.report_count,
+            rollNumber: u.roll_number,
+            registrationNumber: u.registration_number,
+            dob: u.dob,
+            createdAt: u.created_at,
+            connections: [],
+            pendingRequestsReceived: [],
+            pendingRequestsSent: [],
+          }));
+          
+          setUsers(prev => {
+            const merged = [...prev];
+            mappedUsers.forEach(mu => {
+              const idx = merged.findIndex(
+                p => p.id === mu.id || p.email.toLowerCase() === mu.email.toLowerCase()
+              );
+              if (idx >= 0) {
+                const local = merged[idx];
+                merged[idx] = {
+                  ...local,
+                  ...mu,
+                  isApproved: local.isApproved || mu.isApproved,
+                  isAdmin: local.isAdmin || mu.isAdmin,
+                  password: local.password || (mu as any).password,
+                };
+              } else {
+                merged.push(mu);
+              }
+            });
+            return merged;
+          });
+        }
+
+        // 2. Fetch Posts
+        const { data: dbPosts } = await supabase.from('posts').select('*').order('created_at', { ascending: false });
+        if (dbPosts && dbPosts.length > 0) {
+          const mappedPosts: Post[] = dbPosts.map((p: any) => ({
+            id: p.id,
+            authorId: p.author_id,
+            authorName: p.author_name,
+            authorUsername: p.author_username,
+            authorAvatar: p.author_avatar,
+            authorRole: p.author_role,
+            authorDept: p.author_dept,
+            authorGradYear: p.author_grad_year,
+            content: p.content,
+            photos: p.photos || [],
+            videoUrl: p.video_url || undefined,
+            taggedUsernames: p.tagged_usernames || [],
+            likes: p.likes || [],
+            comments: p.comments || [],
+            createdAt: p.created_at,
+          }));
+          setPosts(mappedPosts);
+        }
+
+        // 3. Fetch Direct Messages
+        const { data: dbMessages } = await supabase.from('direct_messages').select('*').order('created_at', { ascending: true });
+        if (dbMessages && dbMessages.length > 0) {
+          const mappedMessages: DirectMessage[] = dbMessages.map((m: any) => ({
+            id: m.id,
+            senderId: m.sender_id,
+            receiverId: m.receiver_id,
+            content: m.content,
+            photo: m.photo || undefined,
+            read: m.read,
+            createdAt: m.created_at,
+          }));
+          setMessages(mappedMessages);
+        }
+      } catch (err) {
+        console.error('Supabase Sync Error:', err);
+      } finally {
+        setIsSupabaseLoaded(true);
+      }
+    };
+
+    initSupabaseData();
+
+    // Subscribe to real-time posts
+    const postSub = supabase
+      .channel('public:posts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          const p = payload.new as any;
+          const newP: Post = {
+            id: p.id,
+            authorId: p.author_id,
+            authorName: p.author_name,
+            authorUsername: p.author_username,
+            authorAvatar: p.author_avatar,
+            authorRole: p.author_role,
+            authorDept: p.author_dept,
+            authorGradYear: p.author_grad_year,
+            content: p.content,
+            photos: p.photos || [],
+            videoUrl: p.video_url || undefined,
+            taggedUsernames: p.tagged_usernames || [],
+            likes: p.likes || [],
+            comments: p.comments || [],
+            createdAt: p.created_at,
+          };
+          setPosts((prev) => (prev.some(x => x.id === newP.id) ? prev : [newP, ...prev]));
+        } else if (payload.eventType === 'UPDATE') {
+          const p = payload.new as any;
+          setPosts((prev) =>
+            prev.map((x) => (x.id === p.id ? { ...x, likes: p.likes || [], comments: p.comments || [] } : x))
+          );
+        } else if (payload.eventType === 'DELETE') {
+          const oldP = payload.old as any;
+          setPosts((prev) => prev.filter((x) => x.id !== oldP.id));
+        }
+      })
+      .subscribe();
+
+    // Subscribe to real-time messages
+    const messageSub = supabase
+      .channel('public:direct_messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'direct_messages' }, (payload) => {
+        const newMsg = payload.new as any;
+        setMessages(prev => {
+          if (prev.some(x => x.id === newMsg.id)) return prev;
+          return [...prev, {
+            id: newMsg.id,
+            senderId: newMsg.sender_id,
+            receiverId: newMsg.receiver_id,
+            content: newMsg.content,
+            photo: newMsg.photo,
+            createdAt: newMsg.created_at,
+            read: newMsg.read
+          }];
+        });
+      })
+      .subscribe();
+
+    // Subscribe to real-time user changes (new registrations, approvals, blacklists, role changes)
+    const userSub = supabase
+      .channel('public:users')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'users' }, (payload) => {
+        const u = payload.new as any;
+        // Map Supabase row to local User shape
+        const newUser: User = {
+          id: u.id,
+          name: u.name,
+          username: u.username,
+          email: u.email,
+          role: u.role,
+          department: u.department,
+          gradYear: u.grad_year,
+          avatar: u.avatar,
+          coverImage: u.cover_image,
+          bio: u.bio,
+          isAdmin: u.is_admin ?? false,
+          isApproved: u.is_approved ?? false,
+          isBlacklisted: u.is_blacklisted ?? false,
+          reportCount: u.report_count ?? 0,
+          rollNumber: u.roll_number,
+          registrationNumber: u.registration_number,
+          dob: u.dob,
+          createdAt: u.created_at,
+          connections: [],
+          pendingRequestsReceived: [],
+          pendingRequestsSent: [],
+        };
+        setUsers(prev => {
+          // Don't add if already exists (local registerUser already added them)
+          if (prev.some(x => x.id === newUser.id || x.email.toLowerCase() === newUser.email.toLowerCase())) {
+            return prev;
+          }
+          return [...prev, newUser];
+        });
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users' }, (payload) => {
+        const u = payload.new as any;
+        setUsers(prev => prev.map(existing => {
+          if (existing.id === u.id || existing.email.toLowerCase() === (u.email || '').toLowerCase()) {
+            return {
+              ...existing,
+              isApproved: u.is_approved ?? existing.isApproved,
+              isAdmin: u.is_admin ?? existing.isAdmin,
+              isBlacklisted: u.is_blacklisted ?? existing.isBlacklisted,
+              avatar: u.avatar || existing.avatar,
+              bio: u.bio || existing.bio,
+              coverImage: u.cover_image || existing.coverImage,
+            };
+          }
+          return existing;
+        }));
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'users' }, (payload) => {
+        const deleted = payload.old as any;
+        setUsers(prev => prev.filter(u => u.id !== deleted.id));
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(postSub);
+      supabase.removeChannel(messageSub);
+      supabase.removeChannel(userSub);
+    };
+  }, []);
+
   const currentUser = isAuthenticated
     ? users.find((u) => u.id === currentUserId && !u.isBlacklisted && u.isApproved) || null
     : null;
 
-  // If session state indicates authenticated but no valid approved user is found, reset auth state
+  // Only reset session AFTER Supabase has loaded - prevents false logout on page refresh
   useEffect(() => {
-    if (isAuthenticated && !currentUser) {
+    if (isSupabaseLoaded && isAuthenticated && !currentUser) {
       setIsAuthenticated(false);
       setCurrentUserId('');
     }
-  }, [isAuthenticated, currentUser]);
+  }, [isSupabaseLoaded, isAuthenticated, currentUser]);
 
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
@@ -208,9 +472,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const loginUser = (identifier: string, pass: string) => {
+  const loginUser = async (identifier: string, pass: string) => {
     const cleanId = identifier.trim().toLowerCase().replace(/^@/, '');
-    const targetUser = users.find(
+    
+    // Find candidate matching identifier
+    const candidates = users.filter(
       (u) =>
         u.username.toLowerCase() === cleanId ||
         (cleanId === 'admin' && u.username.toLowerCase() === 'admin_nce') ||
@@ -219,14 +485,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (u.rollNumber && u.rollNumber.toLowerCase() === cleanId)
     );
 
-    if (!targetUser) {
+    if (candidates.length === 0) {
       return { success: false, message: 'No account found matching this Username, Email ID, or Registration No.' };
     }
+
+    // Prefer an approved record if multiple records exist
+    const targetUser = candidates.find((u) => u.isApproved) || candidates[0];
 
     if (targetUser.isBlacklisted) {
       return {
         success: false,
-        message: 'Your account has been blacklisted by campus administration. Login is restricted. Please contact the admin if you believe this is an error.',
+        message: 'Your account has been blacklisted by campus administration. Login is restricted.',
       };
     }
 
@@ -237,8 +506,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    if (targetUser.password && targetUser.password !== pass) {
-      return { success: false, message: 'Incorrect password. Please verify your credentials.' };
+    // Try Supabase Auth sign in
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: targetUser.email,
+      password: pass,
+    });
+
+    if (authError) {
+      // Fallback to local password hash check
+      const hashedPass = await hashPassword(pass);
+      if (targetUser.password) {
+        if (targetUser.password !== hashedPass) {
+          return { success: false, message: 'Incorrect password. Please verify your credentials.' };
+        }
+      } else {
+        // No local password hash stored and Supabase Auth failed
+        return { success: false, message: authError.message || 'Login failed. Please check your password.' };
+      }
     }
 
     setCurrentUserId(targetUser.id);
@@ -249,6 +533,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logoutUser = () => {
     setIsAuthenticated(false);
     setCurrentUserId('');
+    supabase.auth.signOut().catch(() => { /* silent */ });
   };
 
   const loginAsDemoUser = (userId: string) => {
@@ -295,7 +580,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Register New User (Pending Admin Approval or Auto-Approved)
-  const registerUser = (
+  const registerUser = async (
     newUser: Omit<User, 'id' | 'isApproved' | 'reportCount' | 'connections' | 'pendingRequestsReceived' | 'pendingRequestsSent' | 'createdAt'>
   ) => {
     const existing = users.find(
@@ -316,10 +601,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'An account with this Registration Number already exists.' };
     }
 
+    const hashedPassword = await hashPassword(newUser.password || '');
+
+    // 1. Sign up with Supabase Auth (Pass all profile data as meta_data for the DB Trigger!)
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: newUser.email.toLowerCase(),
+      password: newUser.password || '',
+      options: {
+        data: {
+          name: newUser.name,
+          username: newUser.username,
+          role: newUser.role,
+          department: newUser.department,
+          grad_year: newUser.gradYear,
+          avatar: newUser.avatar,
+          bio: newUser.bio,
+          roll_number: newUser.rollNumber,
+          registration_number: newUser.registrationNumber,
+          dob: newUser.dob,
+          password_hash: hashedPassword,
+        }
+      }
+    });
+
+    if (authError) {
+      console.error('Supabase Auth Error:', authError);
+      return { success: false, message: `Auth Error: ${authError.message}` };
+    }
+
     const created: User = {
       ...newUser,
-      id: `u-${Date.now()}`,
-      isApproved: false, // Put ON HOLD pending admin verification!
+      password: hashedPassword,
+      id: authData?.user?.id || `u-${Date.now()}`,
+      isApproved: false, 
       reportCount: 0,
       connections: [],
       pendingRequestsReceived: [],
@@ -327,6 +641,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString(),
     };
 
+    // Note: We no longer do the frontend insert into public.users here!
+    // Supabase enforces Email Confirmations which blocks RLS inserts on the frontend.
+    // Instead, the PostgreSQL trigger "on_auth_user_created" will automatically extract 
+    // the meta_data we passed above and securely create the public.users row!
+
+    // 3. Update Local State (Optimistic)
     setUsers((prev) => [...prev, created]);
 
     addAdminLog(
@@ -343,7 +663,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Admin Actions
-  const approveUser = (userId: string) => {
+  const approveUser = async (userId: string) => {
     const target = users.find((u) => u.id === userId);
     if (!target) return;
 
@@ -351,40 +671,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map((u) => (u.id === userId ? { ...u, isApproved: true } : u))
     );
 
+    try {
+      const { error } = await supabase.from('users').update({ is_approved: true }).eq('id', userId);
+      if (error) {
+        await supabase.from('users').update({ is_approved: true }).eq('email', target.email);
+      }
+    } catch (err) {
+      console.error('Failed to sync user approval to Supabase:', err);
+    }
+
     addAdminLog('signup', `ADMIN APPROVED new user @${target.username} (${target.name}) into the platform.`);
   };
 
-  const rejectUser = (userId: string) => {
+  const rejectUser = async (userId: string) => {
     const target = users.find((u) => u.id === userId);
     if (!target) return;
 
     setUsers((prev) => prev.filter((u) => u.id !== userId));
+
+    try {
+      await supabase.from('users').delete().eq('id', userId);
+    } catch (err) {
+      console.error('Failed to delete rejected user from Supabase:', err);
+    }
+
     addAdminLog('delete', `ADMIN REJECTED registration request for @${target.username} (${target.name}).`);
   };
 
-  const deleteUserRequest = (userId: string) => {
+  const deleteUserRequest = async (userId: string) => {
     const target = users.find((u) => u.id === userId);
     if (!target) return;
 
     setUsers((prev) => prev.filter((u) => u.id !== userId));
+
+    try {
+      await supabase.from('users').delete().eq('id', userId);
+    } catch (err) {
+      console.error('Failed to delete user request from Supabase:', err);
+    }
+
     addAdminLog('delete', `ADMIN DELETED registration request & user record for @${target.username} (${target.name}).`);
   };
 
-  const blacklistUser = (userId: string) => {
+  const blacklistUser = async (userId: string) => {
     const target = users.find((u) => u.id === userId);
     if (!target) return;
 
-    // Purge target user posts & comments
     setUsers((prev) =>
       prev.map((u) => (u.id === userId ? { ...u, isBlacklisted: true, isApproved: false } : u))
     );
 
     setPosts((prev) => prev.filter((p) => p.authorId !== userId));
 
+    try {
+      await supabase.from('users').update({ is_blacklisted: true, is_approved: false }).eq('id', userId);
+      await supabase.from('posts').delete().eq('author_id', userId);
+    } catch (err) {
+      console.error('Failed to sync blacklist to Supabase:', err);
+    }
+
     addAdminLog('blacklist', `USER BLACKLISTED: @${target.username} was suspended and posts purged.`);
   };
 
-  const unblacklistUser = (userId: string) => {
+  const unblacklistUser = async (userId: string) => {
     const target = users.find((u) => u.id === userId);
     if (!target) return;
 
@@ -396,10 +745,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
+    try {
+      await supabase.from('users').update({ is_blacklisted: false, is_approved: true, report_count: 0 }).eq('id', userId);
+    } catch (err) {
+      console.error('Failed to sync unblacklist to Supabase:', err);
+    }
+
     addAdminLog('signup', `ADMIN UN-BLACKLISTED / RESTORED ACCESS: @${target.username} (${target.name}) account un-blacklisted.`);
   };
 
-  const deleteUserAccount = (userId: string) => {
+  const deleteUserAccount = async (userId: string) => {
     const target = users.find((u) => u.id === userId);
     if (!target) return;
 
@@ -424,6 +779,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Delete reports
     setReports((prev) => prev.filter((r) => r.targetUserId !== userId && r.reporterId !== userId));
 
+    try {
+      await supabase.from('users').delete().eq('id', userId);
+      await supabase.from('posts').delete().eq('author_id', userId);
+    } catch (err) {
+      console.error('Failed to delete user account from Supabase:', err);
+    }
+
     addAdminLog('delete', `ADMIN DELETED USER ACCOUNT: @${target.username} (${target.name}) permanently removed from system.`);
 
     // If deleting currently logged in user, logout
@@ -432,7 +794,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const toggleAdminRole = (userId: string) => {
+  const toggleAdminRole = async (userId: string) => {
     const target = users.find((u) => u.id === userId);
     if (!target) return;
 
@@ -441,6 +803,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map((u) => (u.id === userId ? { ...u, isAdmin: nextIsAdmin } : u))
     );
 
+    try {
+      await supabase.from('users').update({ is_admin: nextIsAdmin }).eq('id', userId);
+    } catch (err) {
+      console.error('Failed to update admin role in Supabase:', err);
+    }
+
     addAdminLog(
       'role_change',
       `ADMIN ROLE CHANGED: Privileges ${nextIsAdmin ? 'GRANTED TO' : 'REVOKED FROM'} @${target.username} (${target.name}).`
@@ -448,7 +816,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Create Post
-  const createPost = (content: string, photos: string[], videoUrl?: string) => {
+  const createPost = async (content: string, photos: string[], videoUrl?: string) => {
     if (!currentUser) return;
 
     const taggedUsernames = extractTaggedUsernames(content);
@@ -473,6 +841,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setPosts((prev) => [newPost, ...prev]);
 
+    try {
+      await supabase.from('posts').insert([{
+        id: newPost.id,
+        author_id: currentUser.id,
+        author_name: currentUser.name,
+        author_username: currentUser.username,
+        author_avatar: currentUser.avatar,
+        author_role: currentUser.role,
+        author_dept: currentUser.department,
+        author_grad_year: currentUser.gradYear,
+        content,
+        photos: photos || [],
+        video_url: videoUrl || null,
+        tagged_usernames: taggedUsernames || [],
+        likes: [],
+        comments: [],
+        created_at: newPost.createdAt
+      }]);
+    } catch (err) {
+      console.error('Failed to insert post to Supabase:', err);
+    }
+
     // Admin activity log
     addAdminLog('post', `Published a new post with ${photos.length} photos.`);
 
@@ -486,41 +876,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Delete Post
-  const deletePost = (postId: string) => {
+  const deletePost = async (postId: string) => {
     const post = posts.find((p) => p.id === postId);
     if (!post) return;
 
     setPosts((prev) => prev.filter((p) => p.id !== postId));
+
+    try {
+      await supabase.from('posts').delete().eq('id', postId);
+    } catch (err) {
+      console.error('Failed to delete post from Supabase:', err);
+    }
+
     addAdminLog('delete', `Deleted post (ID: ${postId}) by @${post.authorUsername}.`);
   };
 
-  // Like Post
-  const likePost = (postId: string) => {
+  // Like Post - fixed: compute newLikes BEFORE setPosts to avoid closure race condition
+  const likePost = async (postId: string) => {
     if (!currentUser) return;
+
+    const post = posts.find((p) => p.id === postId);
+    if (!post) return;
+
+    const isLiked = post.likes.includes(currentUser.id);
+    const newLikes = isLiked
+      ? post.likes.filter((id) => id !== currentUser.id)
+      : [...post.likes, currentUser.id];
 
     setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          const isLiked = p.likes.includes(currentUser.id);
-          const newLikes = isLiked
-            ? p.likes.filter((id) => id !== currentUser.id)
-            : [...p.likes, currentUser.id];
-
-          if (!isLiked && p.authorId !== currentUser.id) {
-            addNotification(p.authorId, 'like', `liked your post: "${p.content.substring(0, 30)}..."`, postId);
-            addAdminLog('like', `Liked post by @${p.authorUsername}`);
-          }
-
-          return { ...p, likes: newLikes };
-        }
-        return p;
-      })
+      prev.map((p) => (p.id === postId ? { ...p, likes: newLikes } : p))
     );
+
+    if (!isLiked && post.authorId !== currentUser.id) {
+      addNotification(post.authorId, 'like', `liked your post: "${post.content.substring(0, 30)}..."`, postId);
+      addAdminLog('like', `Liked post by @${post.authorUsername}`);
+    }
+
+    try {
+      await supabase.from('posts').update({ likes: newLikes }).eq('id', postId);
+    } catch (err) {
+      console.error('Failed to update likes in Supabase:', err);
+    }
   };
 
-  // Add Comment
+  // Helper to sync post comments to Supabase
+  const syncCommentsToSupabase = async (postId: string, updatedComments: Comment[]) => {
+    try {
+      await supabase.from('posts').update({ comments: updatedComments }).eq('id', postId);
+    } catch (err) {
+      console.error('Failed to sync comments to Supabase:', err);
+    }
+  };
+
+  // Add Comment - fixed: compute updatedComments BEFORE setPosts
   const addComment = (postId: string, content: string) => {
     if (!currentUser) return;
+
+    const post = posts.find((p) => p.id === postId);
+    if (!post) return;
 
     const newComment: Comment = {
       id: `c-${Date.now()}`,
@@ -534,47 +947,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       replies: [],
     };
 
+    const updatedComments = [...post.comments, newComment];
+
+    if (post.authorId !== currentUser.id) {
+      addNotification(post.authorId, 'comment', `commented on your post: "${content.substring(0, 30)}..."`, postId);
+    }
+    addAdminLog('comment', `Commented on @${post.authorUsername}'s post.`);
+
     setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          if (p.authorId !== currentUser.id) {
-            addNotification(p.authorId, 'comment', `commented on your post: "${content.substring(0, 30)}..."`, postId);
-          }
-          addAdminLog('comment', `Commented on @${p.authorUsername}'s post.`);
-          return { ...p, comments: [...p.comments, newComment] };
-        }
-        return p;
-      })
+      prev.map((p) => (p.id === postId ? { ...p, comments: updatedComments } : p))
     );
+
+    syncCommentsToSupabase(postId, updatedComments);
   };
 
-  // Like Comment
+  // Like Comment - fixed: compute updatedComments BEFORE setPosts
   const likeComment = (postId: string, commentId: string) => {
     if (!currentUser) return;
 
+    const post = posts.find((p) => p.id === postId);
+    if (!post) return;
+
+    const updatedComments = post.comments.map((c) => {
+      if (c.id === commentId) {
+        const isLiked = c.likes.includes(currentUser.id);
+        const newLikes = isLiked
+          ? c.likes.filter((id) => id !== currentUser.id)
+          : [...c.likes, currentUser.id];
+        return { ...c, likes: newLikes };
+      }
+      return c;
+    });
+
     setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          const updatedComments = p.comments.map((c) => {
-            if (c.id === commentId) {
-              const isLiked = c.likes.includes(currentUser.id);
-              const newLikes = isLiked
-                ? c.likes.filter((id) => id !== currentUser.id)
-                : [...c.likes, currentUser.id];
-              return { ...c, likes: newLikes };
-            }
-            return c;
-          });
-          return { ...p, comments: updatedComments };
-        }
-        return p;
-      })
+      prev.map((p) => (p.id === postId ? { ...p, comments: updatedComments } : p))
     );
+
+    syncCommentsToSupabase(postId, updatedComments);
   };
 
-  // Add Reply
+  // Add Reply - fixed: compute updatedComments BEFORE setPosts
   const addReply = (postId: string, commentId: string, content: string) => {
     if (!currentUser) return;
+
+    const post = posts.find((p) => p.id === postId);
+    if (!post) return;
 
     const newReply: Reply = {
       id: `r-${Date.now()}`,
@@ -587,38 +1004,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       likes: [],
     };
 
-    setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          const updatedComments = p.comments.map((c) => {
-            if (c.id === commentId) {
-              if (c.authorId !== currentUser.id) {
-                addNotification(c.authorId, 'reply', `replied to your comment: "${content.substring(0, 30)}..."`, postId);
-              }
-              return { ...c, replies: [...c.replies, newReply] };
-            }
-            return c;
-          });
-          return { ...p, comments: updatedComments };
+    const updatedComments = post.comments.map((c) => {
+      if (c.id === commentId) {
+        if (c.authorId !== currentUser.id) {
+          addNotification(c.authorId, 'reply', `replied to your comment: "${content.substring(0, 30)}..."`, postId);
         }
-        return p;
-      })
+        return { ...c, replies: [...c.replies, newReply] };
+      }
+      return c;
+    });
+
+    setPosts((prev) =>
+      prev.map((p) => (p.id === postId ? { ...p, comments: updatedComments } : p))
     );
+
+    syncCommentsToSupabase(postId, updatedComments);
   };
 
-  // Delete Comment
+  // Delete Comment - fixed: compute updatedComments BEFORE setPosts
   const deleteComment = (postId: string, commentId: string) => {
+    const post = posts.find((p) => p.id === postId);
+    if (!post) return;
+
+    const updatedComments = post.comments.filter((c) => c.id !== commentId);
+
     setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          return {
-            ...p,
-            comments: p.comments.filter((c) => c.id !== commentId),
-          };
-        }
-        return p;
-      })
+      prev.map((p) => (p.id === postId ? { ...p, comments: updatedComments } : p))
     );
+
+    syncCommentsToSupabase(postId, updatedComments);
     addAdminLog('delete', `Deleted a comment on post ${postId}.`);
   };
 
@@ -696,7 +1110,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Direct Messaging
-  const sendDirectMessage = (receiverId: string, content: string, photo?: string) => {
+  const sendDirectMessage = async (receiverId: string, content: string, photo?: string) => {
     if (!currentUser) return;
 
     const newMsg: DirectMessage = {
@@ -710,6 +1124,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setMessages((prev) => [...prev, newMsg]);
+
+    try {
+      await supabase.from('direct_messages').insert([{
+        id: newMsg.id,
+        sender_id: currentUser.id,
+        receiver_id: receiverId,
+        content,
+        photo: photo || null,
+        read: false,
+        created_at: newMsg.createdAt
+      }]);
+    } catch (err) {
+      console.error('Failed to insert message into Supabase:', err);
+    }
+
     addAdminLog('connect', `Sent direct message to user ID ${receiverId}.`);
   };
 
@@ -764,28 +1193,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Update Profile Info
-  const updateBioAndAvatar = (bio: string, avatar: string, coverImage?: string) => {
+  // Update Profile Info (with Supabase sync)
+  const updateBioAndAvatar = async (bio: string, avatar: string, coverImage?: string) => {
     if (!currentUser) return;
 
     setUsers((prev) =>
       prev.map((u) => (u.id === currentUser.id ? { ...u, bio, avatar, coverImage: coverImage ?? u.coverImage } : u))
     );
 
-    // Also update existing posts by this author with new avatar
     setPosts((prev) =>
       prev.map((p) => (p.authorId === currentUser.id ? { ...p, authorAvatar: avatar } : p))
     );
 
+    try {
+      await supabase.from('users').update({
+        bio,
+        avatar,
+        cover_image: coverImage ?? currentUser.coverImage ?? null,
+      }).eq('id', currentUser.id);
+    } catch (err) {
+      console.error('Failed to update profile in Supabase:', err);
+    }
+
     addAdminLog('post', `Updated profile bio and photo.`);
   };
 
-  const updateCoverImage = (coverImage: string) => {
+  const updateCoverImage = async (coverImage: string) => {
     if (!currentUser) return;
 
     setUsers((prev) =>
       prev.map((u) => (u.id === currentUser.id ? { ...u, coverImage } : u))
     );
+
+    try {
+      await supabase.from('users').update({ cover_image: coverImage }).eq('id', currentUser.id);
+    } catch (err) {
+      console.error('Failed to update cover image in Supabase:', err);
+    }
 
     addAdminLog('post', `Updated profile cover/background photo.`);
   };

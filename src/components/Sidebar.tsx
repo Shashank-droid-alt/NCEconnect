@@ -6,7 +6,6 @@ import {
   User as UserIcon,
   ShieldCheck,
   PlusCircle,
-  Briefcase,
   GraduationCap,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';

@@ -1,16 +1,12 @@
 import React, { useState } from 'react';
 import {
-  User as UserIcon,
   Edit3,
   Camera,
-  Crop,
   Heart,
-  MessageCircle,
   Users,
   Grid,
   Check,
   GraduationCap,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -40,6 +36,8 @@ export const MeView: React.FC<{ onReport: (targetUserId: string, postId: string)
   // Photo editing for profile pic
   const [tempProfileImage, setTempProfileImage] = useState<string | null>(null);
   const [showCropper, setShowCropper] = useState(false);
+  const [tempCoverImage, setTempCoverImage] = useState<string | null>(null);
+  const [showCoverCropper, setShowCoverCropper] = useState(false);
 
   if (!currentUser) return null;
 
@@ -90,6 +88,7 @@ export const MeView: React.FC<{ onReport: (targetUserId: string, postId: string)
       };
       reader.readAsDataURL(file);
     }
+    e.target.value = '';
   };
 
   const handleProfileCropComplete = async (croppedUrl: string) => {

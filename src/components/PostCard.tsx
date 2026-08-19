@@ -24,6 +24,7 @@ interface PostCardProps {
 export const PostCard: React.FC<PostCardProps> = ({ post, onReport }) => {
   const {
     currentUser,
+    users,
     likePost,
     addComment,
     likeComment,
@@ -144,7 +145,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onReport }) => {
         <FormattedText
           text={post.content}
           onTagClick={(username) => {
-            const matchedUser = useApp().users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+            const matchedUser = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
             if (matchedUser) setSelectedUserIdForView(matchedUser.id);
           }}
         />
@@ -215,7 +216,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onReport }) => {
         <div className="px-4 sm:px-5 py-2 bg-slate-50 dark:bg-slate-800/50 text-xs border-t border-slate-100 dark:border-slate-800">
           <span className="font-semibold text-slate-600 dark:text-slate-300 mr-1">Liked by:</span>
           {post.likes.map((id, index) => {
-            const u = useApp().users.find((user) => user.id === id);
+            const u = users.find((user) => user.id === id);
             return (
               <span key={id} className="text-indigo-600 dark:text-indigo-400 font-medium mr-2">
                 @{u?.username || 'user'}
@@ -318,7 +319,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onReport }) => {
                         <FormattedText
                           text={comment.content}
                           onTagClick={(username) => {
-                            const matchedUser = useApp().users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+                            const matchedUser = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
                             if (matchedUser) setSelectedUserIdForView(matchedUser.id);
                           }}
                         />

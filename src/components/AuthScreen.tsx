@@ -113,7 +113,7 @@ export const AuthScreen: React.FC<{ initialMode?: 'login' | 'register' }> = ({
   const isPasswordValid = hasMinLength && hasDigit && hasSpecialChar;
   const isPasswordMatching = password.length > 0 && password === confirmPassword;
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatusMessage(null);
 
@@ -122,13 +122,13 @@ export const AuthScreen: React.FC<{ initialMode?: 'login' | 'register' }> = ({
       return;
     }
 
-    const res = loginUser(loginIdentifier, loginPassword);
+    const res = await loginUser(loginIdentifier, loginPassword);
     if (!res.success) {
       setStatusMessage({ type: 'error', text: res.message });
     }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatusMessage(null);
 
@@ -175,7 +175,7 @@ export const AuthScreen: React.FC<{ initialMode?: 'login' | 'register' }> = ({
     const finalRollNo = role === 'student' ? rollNumber.trim() : 'N/A (Alumni)';
     const finalRegNo = role === 'student' ? registrationNumber.trim() : 'N/A (Alumni)';
 
-    const res = registerUser({
+    const res = await registerUser({
       name: fullName.trim(),
       username: username.trim(),
       email: email.trim().toLowerCase(),
@@ -185,7 +185,7 @@ export const AuthScreen: React.FC<{ initialMode?: 'login' | 'register' }> = ({
       bio: role === 'student'
         ? `Student at NCE | Roll No: ${finalRollNo} | Reg No: ${finalRegNo}`
         : `Alumni of NCE (${passoutYear.trim()}) | ${branch}`,
-      avatar: `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80`,
+      avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(fullName.trim())}&backgroundColor=4f46e5,6366f1,7c3aed,0ea5e9,0284c7&textColor=ffffff`,
       rollNumber: finalRollNo,
       registrationNumber: finalRegNo,
       dob,

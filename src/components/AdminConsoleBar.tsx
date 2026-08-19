@@ -10,7 +10,6 @@ import {
   AlertTriangle,
   CheckCircle,
   Users,
-  Search,
   Flag,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -211,7 +210,7 @@ export const AdminConsoleBar: React.FC<{ onClose: () => void }> = ({ onClose }) 
 
                             <div className="bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200/60 dark:border-slate-700">
                               <span className="text-slate-400 block font-sans text-[10px]">8. Account Password:</span>
-                              <span className="font-bold text-rose-500">{p.password || '●●●●●●●●'}</span>
+                              <span className="font-bold text-rose-500">●●●●●●●●</span>
                             </div>
 
                             <div className="bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200/60 dark:border-slate-700">

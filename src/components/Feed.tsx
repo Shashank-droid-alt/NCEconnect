@@ -12,20 +12,18 @@ export const Feed: React.FC<FeedProps> = ({ onOpenCreatePost, onReport }) => {
   const { currentUser, posts } = useApp();
 
   const [filter, setFilter] = useState<'all' | 'students' | 'alumni' | 'tagged'>('all');
-  const [visibleCount, setVisibleCount] = useState<number>(3); // Initial batch size!
+  const [visibleCount, setVisibleCount] = useState<number>(3);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
 
   const loaderRef = useRef<HTMLDivElement>(null);
 
-  if (!currentUser) return null;
-
-  // Filter posts based on tab
+  // Filter posts based on tab — computed before hooks so we can use in useEffect deps
   const filteredPosts = posts.filter((p) => {
     if (filter === 'students') return p.authorRole === 'student';
     if (filter === 'alumni') return p.authorRole === 'alumni';
     if (filter === 'tagged') {
       return p.taggedUsernames.some(
-        (username) => username.toLowerCase() === currentUser.username.toLowerCase()
+        (username) => username.toLowerCase() === (currentUser?.username || '').toLowerCase()
       );
     }
     return true;
@@ -35,13 +33,13 @@ export const Feed: React.FC<FeedProps> = ({ onOpenCreatePost, onReport }) => {
   const hasMore = visibleCount < filteredPosts.length;
 
   // Infinite Scroll Trigger via IntersectionObserver
+  // IMPORTANT: useEffect must be declared unconditionally (React rules of hooks)
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         const target = entries[0];
         if (target.isIntersecting && hasMore && !isLoadingMore) {
           setIsLoadingMore(true);
-          // Simulate smooth campus network buffering
           setTimeout(() => {
             setVisibleCount((prev) => prev + 2);
             setIsLoadingMore(false);
@@ -57,6 +55,8 @@ export const Feed: React.FC<FeedProps> = ({ onOpenCreatePost, onReport }) => {
 
     return () => observer.disconnect();
   }, [hasMore, isLoadingMore, filteredPosts.length]);
+
+  if (!currentUser) return null;
 
   return (
     <div className="space-y-4 pb-24 sm:pb-20 lg:pb-12">

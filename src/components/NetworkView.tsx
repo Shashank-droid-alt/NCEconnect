@@ -201,7 +201,7 @@ export const NetworkView: React.FC = () => {
                     disabled
                     className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-slate-100 dark:bg-slate-800 text-slate-400 rounded-xl text-xs font-semibold cursor-not-allowed"
                   >
-                    <Clock className="w-4 h-4" /> Pending Approval
+                    <Clock className="w-4 h-4" /> Connection Request Sent
                   </button>
                 ) : (
                   <button

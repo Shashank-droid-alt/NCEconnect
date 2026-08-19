@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -19,6 +19,8 @@ import { SearchView } from './components/SearchView';
 
 function MainLayout() {
   const {
+    currentUser,
+    users,
     isAuthenticated,
     activeTab,
     setActiveTab,
@@ -36,6 +38,77 @@ function MainLayout() {
   const [reportingData, setReportingData] = useState<{ targetUserId: string; postId?: string } | null>(
     null
   );
+
+  // ── URL & Route Synchronizer ──────────────────────────────────────────────
+  // 1. Initial Load & Popstate (Back/Forward browser buttons)
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const path = window.location.pathname.replace(/^\/+/, '').replace(/^@/, '').toLowerCase().trim();
+
+      if (!path || path === 'feed') {
+        setActiveTab('feed');
+        setSelectedUserIdForView(null);
+      } else if (path === 'network') {
+        setActiveTab('network');
+        setSelectedUserIdForView(null);
+      } else if (path === 'messaging' || path === 'messages') {
+        setActiveTab('messaging');
+        setSelectedUserIdForView(null);
+      } else if (path === 'admin') {
+        setActiveTab('admin');
+        setSelectedUserIdForView(null);
+      } else if (currentUser && (path === currentUser.username.toLowerCase() || path === 'me' || path === 'profile')) {
+        setActiveTab('me');
+        setSelectedUserIdForView(null);
+      } else {
+        // Check if path matches any registered username
+        const matchedUser = users.find((u) => u.username.toLowerCase() === path);
+        if (matchedUser) {
+          if (currentUser && matchedUser.id === currentUser.id) {
+            setActiveTab('me');
+            setSelectedUserIdForView(null);
+          } else {
+            setSelectedUserIdForView(matchedUser.id);
+          }
+        }
+      }
+    };
+
+    handleLocationChange();
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, [users, currentUser]);
+
+  // 2. Sync URL when activeTab or selectedUserIdForView changes
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let targetUrl = '/';
+
+    if (selectedUserIdForView) {
+      const targetUser = users.find((u) => u.id === selectedUserIdForView);
+      if (targetUser?.username) {
+        targetUrl = `/${targetUser.username}`;
+      }
+    } else if (activeTab === 'me') {
+      if (currentUser?.username) {
+        targetUrl = `/${currentUser.username}`;
+      }
+    } else if (activeTab === 'network') {
+      targetUrl = '/network';
+    } else if (activeTab === 'messaging') {
+      targetUrl = '/messaging';
+    } else if (activeTab === 'admin') {
+      targetUrl = '/admin';
+    } else {
+      targetUrl = '/';
+    }
+
+    const currentPath = window.location.pathname;
+    if (currentPath !== targetUrl && !(currentPath === '/' && targetUrl === '/')) {
+      window.history.pushState(null, '', targetUrl);
+    }
+  }, [activeTab, selectedUserIdForView, currentUser, users, isAuthenticated]);
 
   if (!isAuthenticated) {
     return <AuthScreen />;

@@ -23,12 +23,14 @@ export const MessagingView: React.FC = () => {
 
   const activeContact = users.find((u) => u.id === activeContactId);
 
-  // Filter messages between current user and active contact
-  const chatMessages = messages.filter(
-    (m) =>
-      (m.senderId === currentUser.id && m.receiverId === activeContactId) ||
-      (m.senderId === activeContactId && m.receiverId === currentUser.id)
-  );
+  // Filter and chronologically sort messages between current user and active contact
+  const chatMessages = messages
+    .filter(
+      (m) =>
+        (m.senderId === currentUser.id && m.receiverId === activeContactId) ||
+        (m.senderId === activeContactId && m.receiverId === currentUser.id)
+    )
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();

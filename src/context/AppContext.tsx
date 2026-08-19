@@ -641,10 +641,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString(),
     };
 
-    // Note: We no longer do the frontend insert into public.users here!
-    // Supabase enforces Email Confirmations which blocks RLS inserts on the frontend.
-    // Instead, the PostgreSQL trigger "on_auth_user_created" will automatically extract 
-    // the meta_data we passed above and securely create the public.users row!
+    // 2. Ensure row is in public.users with is_approved = false (awaiting admin verification)
+    if (authData?.user?.id) {
+      try {
+        await supabase.from('users').upsert({
+          id: authData.user.id,
+          name: newUser.name,
+          username: newUser.username,
+          email: newUser.email.toLowerCase(),
+          role: newUser.role,
+          department: newUser.department,
+          grad_year: newUser.gradYear,
+          avatar: newUser.avatar,
+          bio: newUser.bio,
+          roll_number: newUser.rollNumber,
+          registration_number: newUser.registrationNumber,
+          dob: newUser.dob,
+          is_admin: false,
+          is_approved: false,
+          is_blacklisted: false,
+          report_count: 0,
+        }, { onConflict: 'id' });
+      } catch (err) {
+        console.warn('Direct public.users insert notice (trigger may have handled it):', err);
+      }
+    }
 
     // 3. Update Local State (Optimistic)
     setUsers((prev) => [...prev, created]);

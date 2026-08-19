@@ -316,6 +316,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }));
           setMessages(mappedMessages);
         }
+
+        // 4. Fetch Connections
+        const { data: dbConnections } = await supabase.from('connections').select('*');
+        if (dbConnections && dbConnections.length > 0) {
+          setUsers((prev) => {
+            return prev.map((u) => {
+              const userConnections = dbConnections
+                .filter((c: any) => c.status === 'accepted' && (c.requester_id === u.id || c.receiver_id === u.id))
+                .map((c: any) => (c.requester_id === u.id ? c.receiver_id : c.requester_id));
+
+              const pendingReceived = dbConnections
+                .filter((c: any) => c.status === 'pending' && c.receiver_id === u.id)
+                .map((c: any) => c.requester_id);
+
+              const pendingSent = dbConnections
+                .filter((c: any) => c.status === 'pending' && c.requester_id === u.id)
+                .map((c: any) => c.receiver_id);
+
+              return {
+                ...u,
+                connections: Array.from(new Set([...u.connections, ...userConnections])),
+                pendingRequestsReceived: Array.from(new Set([...u.pendingRequestsReceived, ...pendingReceived])),
+                pendingRequestsSent: Array.from(new Set([...u.pendingRequestsSent, ...pendingSent])),
+              };
+            });
+          });
+        }
+
+        // 5. Fetch Notifications
+        const { data: dbNotifications } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
+        if (dbNotifications && dbNotifications.length > 0) {
+          const mappedNotifications: NotificationItem[] = dbNotifications.map((n: any) => ({
+            id: n.id,
+            userId: n.user_id,
+            actorId: n.actor_id,
+            actorName: n.actor_name,
+            actorUsername: n.actor_username,
+            actorAvatar: n.actor_avatar,
+            type: n.type,
+            message: n.message,
+            postId: n.post_id,
+            read: n.read,
+            createdAt: n.created_at,
+          }));
+          setNotifications(mappedNotifications);
+        }
       } catch (err) {
         console.error('Supabase Sync Error:', err);
       } finally {
@@ -386,7 +432,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .channel('public:users')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'users' }, (payload) => {
         const u = payload.new as any;
-        // Map Supabase row to local User shape
         const newUser: User = {
           id: u.id,
           name: u.name,
@@ -411,7 +456,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           pendingRequestsSent: [],
         };
         setUsers(prev => {
-          // Don't add if already exists (local registerUser already added them)
           if (prev.some(x => x.id === newUser.id || x.email.toLowerCase() === newUser.email.toLowerCase())) {
             return prev;
           }
@@ -441,10 +485,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
       .subscribe();
 
+    // Subscribe to real-time connection requests and updates
+    const connSub = supabase
+      .channel('public:connections')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'connections' }, (payload) => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const c = payload.new as any;
+          setUsers((prev) => {
+            return prev.map((u) => {
+              if (c.status === 'pending') {
+                if (u.id === c.requester_id) {
+                  return { ...u, pendingRequestsSent: Array.from(new Set([...u.pendingRequestsSent, c.receiver_id])) };
+                }
+                if (u.id === c.receiver_id) {
+                  return { ...u, pendingRequestsReceived: Array.from(new Set([...u.pendingRequestsReceived, c.requester_id])) };
+                }
+              } else if (c.status === 'accepted') {
+                if (u.id === c.requester_id) {
+                  return {
+                    ...u,
+                    connections: Array.from(new Set([...u.connections, c.receiver_id])),
+                    pendingRequestsSent: u.pendingRequestsSent.filter((id) => id !== c.receiver_id),
+                  };
+                }
+                if (u.id === c.receiver_id) {
+                  return {
+                    ...u,
+                    connections: Array.from(new Set([...u.connections, c.requester_id])),
+                    pendingRequestsReceived: u.pendingRequestsReceived.filter((id) => id !== c.requester_id),
+                  };
+                }
+              }
+              return u;
+            });
+          });
+        } else if (payload.eventType === 'DELETE') {
+          const c = payload.old as any;
+          setUsers((prev) =>
+            prev.map((u) => ({
+              ...u,
+              pendingRequestsSent: u.pendingRequestsSent.filter((id) => id !== c.receiver_id),
+              pendingRequestsReceived: u.pendingRequestsReceived.filter((id) => id !== c.requester_id),
+            }))
+          );
+        }
+      })
+      .subscribe();
+
+    // Subscribe to real-time notifications
+    const notifSub = supabase
+      .channel('public:notifications')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+        const n = payload.new as any;
+        const newN: NotificationItem = {
+          id: n.id,
+          userId: n.user_id,
+          actorId: n.actor_id,
+          actorName: n.actor_name,
+          actorUsername: n.actor_username,
+          actorAvatar: n.actor_avatar,
+          type: n.type,
+          message: n.message,
+          postId: n.post_id,
+          read: n.read,
+          createdAt: n.created_at,
+        };
+        setNotifications((prev) => (prev.some((x) => x.id === newN.id) ? prev : [newN, ...prev]));
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(postSub);
       supabase.removeChannel(messageSub);
       supabase.removeChannel(userSub);
+      supabase.removeChannel(connSub);
+      supabase.removeChannel(notifSub);
     };
   }, []);
 
@@ -620,7 +735,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAdminLogs((prev) => [log, ...prev]);
   };
 
-  const addNotification = (
+  const addNotification = async (
     targetUserId: string,
     type: NotificationItem['type'],
     message: string,
@@ -641,6 +756,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString(),
     };
     setNotifications((prev) => [item, ...prev]);
+
+    try {
+      await supabase.from('notifications').insert([{
+        user_id: targetUserId,
+        actor_id: currentUser.id,
+        actor_name: currentUser.name,
+        actor_username: currentUser.username,
+        actor_avatar: currentUser.avatar,
+        type,
+        message,
+        post_id: postId || null,
+        read: false,
+        created_at: item.createdAt,
+      }]);
+    } catch (err) {
+      console.warn('Sync notification to Supabase notice:', err);
+    }
   };
 
   // Register New User (Pending Admin Approval or Auto-Approved)
@@ -1131,7 +1263,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Networking - Connect Requests
-  const sendConnectRequest = (targetUserId: string) => {
+  const sendConnectRequest = async (targetUserId: string) => {
     if (!currentUser || currentUser.id === targetUserId) return;
 
     setUsers((prev) =>
@@ -1151,9 +1283,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetUser = users.find((u) => u.id === targetUserId);
     addNotification(targetUserId, 'connect_request', `sent you a request to connect on NCEconnect.`);
     addAdminLog('connect', `Sent connection request to @${targetUser?.username || 'user'}.`);
+
+    try {
+      await supabase.from('connections').upsert({
+        requester_id: currentUser.id,
+        receiver_id: targetUserId,
+        status: 'pending',
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'requester_id,receiver_id' });
+    } catch (err) {
+      console.warn('Sync connection to Supabase notice:', err);
+    }
   };
 
-  const acceptConnectRequest = (requesterId: string) => {
+  const acceptConnectRequest = async (requesterId: string) => {
     if (!currentUser) return;
 
     setUsers((prev) =>
@@ -1179,9 +1322,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const requester = users.find((u) => u.id === requesterId);
     addNotification(requesterId, 'connect_accept', `accepted your connection request! You are now connected.`);
     addAdminLog('connect', `Accepted connection with @${requester?.username || 'user'}.`);
+
+    try {
+      await supabase
+        .from('connections')
+        .update({ status: 'accepted', updated_at: new Date().toISOString() })
+        .eq('requester_id', requesterId)
+        .eq('receiver_id', currentUser.id);
+    } catch (err) {
+      console.warn('Sync accept connection to Supabase notice:', err);
+    }
   };
 
-  const declineConnectRequest = (requesterId: string) => {
+  const declineConnectRequest = async (requesterId: string) => {
     if (!currentUser) return;
 
     setUsers((prev) =>
@@ -1201,6 +1354,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return u;
       })
     );
+
+    try {
+      await supabase
+        .from('connections')
+        .delete()
+        .eq('requester_id', requesterId)
+        .eq('receiver_id', currentUser.id);
+    } catch (err) {
+      console.warn('Sync decline connection to Supabase notice:', err);
+    }
   };
 
   // Direct Messaging

@@ -753,13 +753,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!target) return;
 
     setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, isApproved: true } : u))
+      prev.map((u) => (u.id === userId || u.email.toLowerCase() === target.email.toLowerCase() ? { ...u, isApproved: true } : u))
     );
 
     try {
-      const { error } = await supabase.from('users').update({ is_approved: true }).eq('id', userId);
-      if (error) {
-        await supabase.from('users').update({ is_approved: true }).eq('email', target.email);
+      const { data: updatedData, error } = await supabase
+        .from('users')
+        .update({ is_approved: true })
+        .or(`id.eq.${userId},email.ilike.${target.email},username.ilike.${target.username}`)
+        .select();
+
+      if (error || !updatedData || updatedData.length === 0) {
+        // Fallback: update by email
+        const { error: emailErr } = await supabase.from('users').update({ is_approved: true }).ilike('email', target.email);
+        if (emailErr) {
+          console.warn('Fallback update notice:', emailErr);
+        }
       }
     } catch (err) {
       console.error('Failed to sync user approval to Supabase:', err);

@@ -532,7 +532,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
       .subscribe();
 
-    // Subscribe to real-time notifications
+    // 5. Subscribe to real-time notifications
     const notifSub = supabase
       .channel('public:notifications')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
@@ -554,12 +554,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
       .subscribe();
 
+    // 6. High-Speed Sub-50ms Instant Broadcast Channel for real-time actions
+    const instantStream = supabase.channel('nce_instant_stream', {
+      config: { broadcast: { self: false } },
+    });
+
+    instantStream
+      .on('broadcast', { event: 'connect_request' }, ({ payload }) => {
+        setUsers((prev) =>
+          prev.map((u) => {
+            if (u.id === payload.requesterId) {
+              return { ...u, pendingRequestsSent: Array.from(new Set([...u.pendingRequestsSent, payload.receiverId])) };
+            }
+            if (u.id === payload.receiverId) {
+              return { ...u, pendingRequestsReceived: Array.from(new Set([...u.pendingRequestsReceived, payload.requesterId])) };
+            }
+            return u;
+          })
+        );
+      })
+      .on('broadcast', { event: 'connect_accept' }, ({ payload }) => {
+        setUsers((prev) =>
+          prev.map((u) => {
+            if (u.id === payload.requesterId) {
+              return {
+                ...u,
+                connections: Array.from(new Set([...u.connections, payload.receiverId])),
+                pendingRequestsSent: u.pendingRequestsSent.filter((id) => id !== payload.receiverId),
+              };
+            }
+            if (u.id === payload.receiverId) {
+              return {
+                ...u,
+                connections: Array.from(new Set([...u.connections, payload.requesterId])),
+                pendingRequestsReceived: u.pendingRequestsReceived.filter((id) => id !== payload.requesterId),
+              };
+            }
+            return u;
+          })
+        );
+      })
+      .on('broadcast', { event: 'connect_decline' }, ({ payload }) => {
+        setUsers((prev) =>
+          prev.map((u) => ({
+            ...u,
+            pendingRequestsSent: u.pendingRequestsSent.filter((id) => id !== payload.receiverId),
+            pendingRequestsReceived: u.pendingRequestsReceived.filter((id) => id !== payload.requesterId),
+          }))
+        );
+      })
+      .on('broadcast', { event: 'new_message' }, ({ payload }) => {
+        setMessages((prev) => (prev.some((x) => x.id === payload.id) ? prev : [...prev, payload]));
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(postSub);
       supabase.removeChannel(messageSub);
       supabase.removeChannel(userSub);
       supabase.removeChannel(connSub);
       supabase.removeChannel(notifSub);
+      supabase.removeChannel(instantStream);
     };
   }, []);
 
@@ -1284,6 +1339,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addNotification(targetUserId, 'connect_request', `sent you a request to connect on NCEconnect.`);
     addAdminLog('connect', `Sent connection request to @${targetUser?.username || 'user'}.`);
 
+    // High-speed sub-50ms instant broadcast to all active screens
+    supabase.channel('nce_instant_stream').send({
+      type: 'broadcast',
+      event: 'connect_request',
+      payload: { requesterId: currentUser.id, receiverId: targetUserId },
+    });
+
     try {
       await supabase.from('connections').upsert({
         requester_id: currentUser.id,
@@ -1323,6 +1385,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addNotification(requesterId, 'connect_accept', `accepted your connection request! You are now connected.`);
     addAdminLog('connect', `Accepted connection with @${requester?.username || 'user'}.`);
 
+    // High-speed sub-50ms instant broadcast to all active screens
+    supabase.channel('nce_instant_stream').send({
+      type: 'broadcast',
+      event: 'connect_accept',
+      payload: { requesterId, receiverId: currentUser.id },
+    });
+
     try {
       await supabase
         .from('connections')
@@ -1355,6 +1424,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
+    // High-speed sub-50ms instant broadcast to all active screens
+    supabase.channel('nce_instant_stream').send({
+      type: 'broadcast',
+      event: 'connect_decline',
+      payload: { requesterId, receiverId: currentUser.id },
+    });
+
     try {
       await supabase
         .from('connections')
@@ -1381,6 +1457,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setMessages((prev) => [...prev, newMsg]);
+
+    // High-speed sub-50ms instant broadcast to all active screens
+    supabase.channel('nce_instant_stream').send({
+      type: 'broadcast',
+      event: 'new_message',
+      payload: newMsg,
+    });
 
     try {
       await supabase.from('direct_messages').insert([{

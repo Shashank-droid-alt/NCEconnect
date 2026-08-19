@@ -475,8 +475,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const loginUser = async (identifier: string, pass: string) => {
     const cleanId = identifier.trim().toLowerCase().replace(/^@/, '');
     
-    // Find candidate matching identifier
-    const candidates = users.filter(
+    // 1. Check local state first
+    let candidates = users.filter(
       (u) =>
         u.username.toLowerCase() === cleanId ||
         (cleanId === 'admin' && u.username.toLowerCase() === 'admin_nce') ||
@@ -484,6 +484,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (u.registrationNumber && u.registrationNumber.toLowerCase() === cleanId) ||
         (u.rollNumber && u.rollNumber.toLowerCase() === cleanId)
     );
+
+    // 2. Query Supabase directly to ensure latest approval and user state across all browsers
+    try {
+      const { data: dbUserList } = await supabase
+        .from('users')
+        .select('*')
+        .or(`username.ilike.${cleanId},email.ilike.${cleanId},registration_number.ilike.${cleanId},roll_number.ilike.${cleanId}`);
+
+      if (dbUserList && dbUserList.length > 0) {
+        const mappedDbUsers: User[] = dbUserList.map((dbU: any) => ({
+          id: dbU.id,
+          name: dbU.name,
+          username: dbU.username,
+          email: dbU.email,
+          role: dbU.role,
+          department: dbU.department,
+          gradYear: dbU.grad_year,
+          avatar: dbU.avatar,
+          coverImage: dbU.cover_image,
+          bio: dbU.bio,
+          isAdmin: dbU.is_admin,
+          isApproved: dbU.is_approved,
+          isBlacklisted: dbU.is_blacklisted,
+          reportCount: dbU.report_count,
+          rollNumber: dbU.roll_number,
+          registrationNumber: dbU.registration_number,
+          dob: dbU.dob,
+          createdAt: dbU.created_at,
+          connections: [],
+          pendingRequestsReceived: [],
+          pendingRequestsSent: [],
+        }));
+
+        // Merge mapped users into local state
+        setUsers((prev) => {
+          const merged = [...prev];
+          mappedDbUsers.forEach((mu) => {
+            const idx = merged.findIndex((p) => p.id === mu.id || p.email.toLowerCase() === mu.email.toLowerCase());
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], ...mu };
+            } else {
+              merged.push(mu);
+            }
+          });
+          return merged;
+        });
+
+        candidates = mappedDbUsers;
+      }
+    } catch (err) {
+      console.warn('Direct user query during login notice:', err);
+    }
 
     if (candidates.length === 0) {
       return { success: false, message: 'No account found matching this Username, Email ID, or Registration No.' };
@@ -513,6 +565,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     if (authError) {
+      // Check if error is due to unconfirmed email from Supabase
+      if (authError.message?.toLowerCase().includes('email not confirmed')) {
+        return {
+          success: false,
+          message: 'Supabase email confirmation is pending on this account. Please run the SQL auto-confirm script in Supabase SQL editor to enable instant access.',
+        };
+      }
+
       // Fallback to local password hash check
       const hashedPass = await hashPassword(pass);
       if (targetUser.password) {
@@ -520,10 +580,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return { success: false, message: 'Incorrect password. Please verify your credentials.' };
         }
       } else {
-        // No local password hash stored and Supabase Auth failed
         return { success: false, message: authError.message || 'Login failed. Please check your password.' };
       }
     }
+
+    // Ensure the approved user is in current users array with isApproved: true
+    setUsers((prev) =>
+      prev.map((u) => (u.id === targetUser.id || u.email.toLowerCase() === targetUser.email.toLowerCase() ? { ...u, isApproved: true } : u))
+    );
 
     setCurrentUserId(targetUser.id);
     setIsAuthenticated(true);

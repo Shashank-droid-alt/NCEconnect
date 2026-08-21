@@ -32,6 +32,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     posts,
     sendConnectRequest,
     setActiveTab,
+    openDirectChat,
     setLightboxImage,
     toggleAdminRole,
     blacklistUser,
@@ -126,7 +127,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                           <button
                             onClick={() => {
                               onClose();
-                              setActiveTab('messaging');
+                              openDirectChat(targetUser.id);
                             }}
                             className="px-4 py-2 bg-indigo-600 text-white font-bold text-xs rounded-xl shadow hover:bg-indigo-700 flex items-center gap-1.5"
                           >

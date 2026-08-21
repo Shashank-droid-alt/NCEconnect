@@ -1,5 +1,5 @@
-export interface CropArea {
-  x: number; // percentage 0-100 or pixels
+export interface PixelCrop {
+  x: number;
   y: number;
   width: number;
   height: number;
@@ -7,54 +7,75 @@ export interface CropArea {
 
 export const getCroppedImg = (
   imageSrc: string,
-  pixelCrop: { x: number; y: number; width: number; height: number },
+  pixelCrop: PixelCrop,
   rotation = 0
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const image = new Image();
-    image.src = imageSrc;
     image.crossOrigin = 'anonymous';
 
     image.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
+      try {
+        const rad = (rotation * Math.PI) / 180;
+        const isRotated90or270 = rotation % 180 !== 0;
 
-      if (!ctx) {
-        reject(new Error('Canvas context not available'));
-        return;
+        // Dimensions of rotated image
+        const rotWidth = isRotated90or270 ? image.naturalHeight : image.naturalWidth;
+        const rotHeight = isRotated90or270 ? image.naturalWidth : image.naturalHeight;
+
+        // Intermediate canvas for rotated image
+        const rotCanvas = document.createElement('canvas');
+        rotCanvas.width = rotWidth;
+        rotCanvas.height = rotHeight;
+        const rotCtx = rotCanvas.getContext('2d');
+
+        if (!rotCtx) {
+          reject(new Error('Canvas context not available'));
+          return;
+        }
+
+        // Draw rotated image onto intermediate canvas
+        rotCtx.translate(rotWidth / 2, rotHeight / 2);
+        rotCtx.rotate(rad);
+        rotCtx.drawImage(image, -image.naturalWidth / 2, -image.naturalHeight / 2);
+
+        // Final crop canvas
+        const cropCanvas = document.createElement('canvas');
+        const targetW = Math.max(1, Math.round(pixelCrop.width));
+        const targetH = Math.max(1, Math.round(pixelCrop.height));
+        cropCanvas.width = targetW;
+        cropCanvas.height = targetH;
+        const cropCtx = cropCanvas.getContext('2d');
+
+        if (!cropCtx) {
+          reject(new Error('Canvas context not available'));
+          return;
+        }
+
+        // Draw cropped portion from rotCanvas
+        cropCtx.drawImage(
+          rotCanvas,
+          Math.max(0, Math.round(pixelCrop.x)),
+          Math.max(0, Math.round(pixelCrop.y)),
+          targetW,
+          targetH,
+          0,
+          0,
+          targetW,
+          targetH
+        );
+
+        resolve(cropCanvas.toDataURL('image/jpeg', 0.92));
+      } catch (err) {
+        reject(err);
       }
-
-      // Output size matches requested crop dimensions
-      canvas.width = pixelCrop.width;
-      canvas.height = pixelCrop.height;
-
-      ctx.save();
-
-      // Translate context to center of canvas for rotation
-      ctx.translate(canvas.width / 2, canvas.height / 2);
-      ctx.rotate((rotation * Math.PI) / 180);
-      ctx.translate(-canvas.width / 2, -canvas.height / 2);
-
-      // Draw original image shifted by crop offset
-      ctx.drawImage(
-        image,
-        pixelCrop.x,
-        pixelCrop.y,
-        pixelCrop.width,
-        pixelCrop.height,
-        0,
-        0,
-        pixelCrop.width,
-        pixelCrop.height
-      );
-
-      ctx.restore();
-
-      resolve(canvas.toDataURL('image/jpeg', 0.9));
     };
 
     image.onerror = (error) => {
       reject(error);
     };
+
+    image.src = imageSrc;
   });
 };
+

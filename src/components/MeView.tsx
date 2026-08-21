@@ -8,6 +8,7 @@ import {
   Check,
   GraduationCap,
   Trash2,
+  MessageSquare,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PostCard } from './PostCard';
@@ -26,6 +27,7 @@ export const MeView: React.FC<{ onReport: (targetUserId: string, postId: string)
     clearUserActivity,
     setLightboxImage,
     setSelectedUserIdForView,
+    openDirectChat,
   } = useApp();
 
   const [activeSubTab, setActiveSubTab] = useState<'posts' | 'activity' | 'connections'>('posts');
@@ -304,15 +306,26 @@ export const MeView: React.FC<{ onReport: (targetUserId: string, postId: string)
             return (
               <div
                 key={peer.id}
-                onClick={() => setSelectedUserIdForView(peer.id)}
-                className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center gap-3 cursor-pointer hover:border-indigo-500 transition-colors shadow-sm"
+                className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shadow-sm hover:border-indigo-500/50 transition-colors"
               >
-                <img src={peer.avatar} alt={peer.name} className="w-12 h-12 rounded-full object-cover shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">{peer.name}</h4>
-                  <p className="text-xs text-indigo-600 dark:text-indigo-400 font-semibold">@{peer.username}</p>
-                  <p className="text-[11px] text-slate-500 truncate">{peer.department}</p>
+                <div
+                  onClick={() => setSelectedUserIdForView(peer.id)}
+                  className="flex items-center gap-3 cursor-pointer min-w-0 flex-1"
+                >
+                  <img src={peer.avatar} alt={peer.name} className="w-12 h-12 rounded-full object-cover shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">{peer.name}</h4>
+                    <p className="text-xs text-indigo-600 dark:text-indigo-400 font-semibold">@{peer.username}</p>
+                    <p className="text-[11px] text-slate-500 truncate">{peer.department}</p>
+                  </div>
                 </div>
+                <button
+                  onClick={() => openDirectChat(peer.id)}
+                  className="p-2.5 bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900 rounded-xl transition-colors shrink-0"
+                  title="Send Direct Message"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                </button>
               </div>
             );
           })}

@@ -27,9 +27,12 @@ interface AppContextType {
   selectedUserIdForView: string | null; // Profile modal target
   lightboxImage: { src: string; title?: string } | null;
   isAuthenticated: boolean;
+  activeChatUserId: string | null;
 
   // Actions
   setActiveTab: (tab: 'feed' | 'network' | 'messaging' | 'me' | 'admin') => void;
+  setActiveChatUserId: (id: string | null) => void;
+  openDirectChat: (targetUserId: string) => void;
   setSelectedUserIdForView: (id: string | null) => void;
   setLightboxImage: (data: { src: string; title?: string } | null) => void;
   switchUser: (userId: string) => void;
@@ -152,8 +155,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [activeTab, setActiveTab] = useState<'feed' | 'network' | 'messaging' | 'me' | 'admin'>('feed');
+  const [activeChatUserId, setActiveChatUserId] = useState<string | null>(null);
   const [selectedUserIdForView, setSelectedUserIdForView] = useState<string | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; title?: string } | null>(null);
+
+  const openDirectChat = (targetUserId: string) => {
+    setActiveChatUserId(targetUserId);
+    setActiveTab('messaging');
+  };
 
   // Guard: prevents false session reset before Supabase data has loaded
   const [isSupabaseLoaded, setIsSupabaseLoaded] = useState(false);
@@ -1442,9 +1451,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Direct Messaging
+  // Direct Messaging - ONLY ALLOW MESSAGING CONNECTED FRIENDS
   const sendDirectMessage = async (receiverId: string, content: string, photo?: string) => {
     if (!currentUser) return;
+
+    // Strict security check: Message ONLY allowed if users are connected
+    if (!currentUser.connections.includes(receiverId)) {
+      console.warn('Blocked message: Users must be connected to send direct messages.');
+      return;
+    }
 
     const newMsg: DirectMessage = {
       id: `m-${Date.now()}`,
@@ -1617,7 +1632,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         selectedUserIdForView,
         lightboxImage,
         isAuthenticated,
+        activeChatUserId,
         setActiveTab,
+        setActiveChatUserId,
+        openDirectChat,
         setSelectedUserIdForView,
         setLightboxImage,
         switchUser,

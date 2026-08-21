@@ -12,6 +12,7 @@ export const NetworkView: React.FC = () => {
     setSelectedUserIdForView,
     setLightboxImage,
     setActiveTab,
+    openDirectChat,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -191,7 +192,7 @@ export const NetworkView: React.FC = () => {
               <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
                 {isConnected ? (
                   <button
-                    onClick={() => setActiveTab('messaging')}
+                    onClick={() => openDirectChat(peer.id)}
                     className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors"
                   >
                     <MessageSquare className="w-4 h-4" /> Direct Message
